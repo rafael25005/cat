@@ -242,11 +242,27 @@
 			{ id: 'miel-organica', name: 'Miel orgánica', category: 'Despensa', price: 120, stock: 6, art: '#f2e28e' },
 			{ id: 'shampoo-solido', name: 'Shampoo sólido', category: 'Cuidado personal', price: 88, stock: 10, art: '#cce5d2' },
 			{ id: 'te-verde', name: 'Té verde', category: 'Bebidas', price: 54, stock: 3, art: '#c8e1bd' },
-			{ id: 'velas-aromaticas', name: 'Velas aromáticas', category: 'Hogar', price: 110, stock: 4, art: '#e8c7d5' }
+			{ id: 'velas-aromaticas', name: 'Velas aromáticas', category: 'Hogar', price: 110, stock: 4, art: '#e8c7d5' },
+			{ id: 'aceite-de-oliva', name: 'Aceite de oliva', category: 'Despensa', price: 32, stock: 14, art: '#e8edb1' },
+			{ id: 'barritas-de-cereal', name: 'Barritas de cereal', category: 'Snacks', price: 18, stock: 20, art: '#f5d29a' },
+			{ id: 'crema-corporal', name: 'Crema corporal', category: 'Cuidado personal', price: 46, stock: 9, art: '#f1c9dc' },
+			{ id: 'galletas-avena', name: 'Galletas de avena', category: 'Snacks', price: 15, stock: 18, art: '#efd8b7' },
+			{ id: 'jabon-artesanal', name: 'Jabón artesanal', category: 'Cuidado personal', price: 22, stock: 11, art: '#c7e9e5' },
+			{ id: 'leche-de-almendras', name: 'Leche de almendras', category: 'Bebidas', price: 28, stock: 7, art: '#e8d9bc' },
+			{ id: 'papel-toalla', name: 'Papel toalla', category: 'Hogar', price: 25, stock: 16, art: '#d8e7f2' },
+			{ id: 'quinoa-blanca', name: 'Quinoa blanca', category: 'Despensa', price: 24, stock: 13, art: '#f0e4c5' },
+			{ id: 'salsa-de-tomate', name: 'Salsa de tomate', category: 'Despensa', price: 12, stock: 22, art: '#f2b1a1' },
+			{ id: 'tostadas-integrales', name: 'Tostadas integrales', category: 'Snacks', price: 19, stock: 10, art: '#d9c89f' },
+			{ id: 'yogur-natural', name: 'Yogur natural', category: 'Refrigerados', price: 10, stock: 12, art: '#d4e8f2' }
 		];
-		let products = JSON.parse(localStorage.getItem('catalog-products') || 'null') || [...initialProducts];
+		const savedProducts = JSON.parse(localStorage.getItem('catalog-products') || 'null');
+		const savedById = new Map((savedProducts || []).map(product => [product.id, product]));
+		let products = initialProducts.map(product => ({ ...product, ...(savedById.get(product.id) || {}) }));
+		if (savedProducts) products.push(...savedProducts.filter(product => !initialProducts.some(initial => initial.id === product.id)));
 		let order = {};
 		let activeLetter = 'TODAS';
+		let catalogReady = false;
+		const catalogApi = 'api/catalog.php';
 		const ADMIN_PASSWORD = 'Admin123!';
 		const WHATSAPP_NUMBER = '51953253636';
 
@@ -306,6 +322,34 @@
 			document.getElementById('order-link').href = message ? `https://wa.me/${WHATSAPP_NUMBER}?text=${message}` : '#order-title';
 		}
 
+		async function saveCatalog() {
+			if (!catalogReady) return;
+			try {
+				const response = await fetch(catalogApi, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(products) });
+				if (!response.ok) throw new Error('No se pudo guardar el catálogo');
+			} catch (error) {
+				console.warn('El catálogo se guardó sólo en este navegador:', error);
+			}
+		}
+
+		async function loadCatalog() {
+			try {
+				const response = await fetch(catalogApi, { cache: 'no-store' });
+				if (!response.ok) throw new Error('API no disponible');
+				const sharedProducts = await response.json();
+				if (Array.isArray(sharedProducts) && sharedProducts.length) {
+					products = sharedProducts;
+				} else {
+					await saveCatalog();
+				}
+				catalogReady = true;
+				refresh();
+				await saveCatalog();
+			} catch (error) {
+				console.warn('Usando respaldo local. Abre la web desde Apache para compartir cambios:', error);
+			}
+		}
+
 		function refresh() { localStorage.setItem('catalog-products', JSON.stringify(products)); renderLetters(); renderProducts(); renderOrder(); renderAdmin(); }
 
 		document.addEventListener('click', event => {
@@ -338,6 +382,7 @@
 				product.stock = Math.max(0, Number(stockInput.value) || 0);
 				if (!product.stock) delete order[product.id];
 				refresh();
+				saveCatalog();
 			}
 			const soldButton = event.target.closest('[data-sold]');
 			if (soldButton) {
@@ -345,6 +390,7 @@
 				product.stock = product.stock > 0 ? 0 : Math.max(1, Number(document.querySelector(`[data-stock="${product.id}"]`).value) || 1);
 				if (!product.stock) delete order[product.id];
 				refresh();
+				saveCatalog();
 			}
 			const deleteButton = event.target.closest('[data-delete]');
 			if (deleteButton) {
@@ -353,6 +399,7 @@
 					products = products.filter(item => item.id !== product.id);
 					delete order[product.id];
 					refresh();
+					saveCatalog();
 				}
 			}
 			const removeButton = event.target.closest('[data-remove]');
@@ -371,11 +418,12 @@
 			event.preventDefault();
 			const name = document.getElementById('new-name').value.trim();
 			const imageFile = document.getElementById('new-image').files[0];
-			const addProduct = image => { products.push({ id: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`, name, category: document.getElementById('new-category').value.trim(), price: Number(document.getElementById('new-price').value), stock: Number(document.getElementById('new-stock').value), image, art: '#d9e7d0' }); event.target.reset(); activeLetter = 'TODAS'; refresh(); };
+			const addProduct = image => { products.push({ id: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`, name, category: document.getElementById('new-category').value.trim(), price: Number(document.getElementById('new-price').value), stock: Number(document.getElementById('new-stock').value), image, art: '#d9e7d0' }); event.target.reset(); activeLetter = 'TODAS'; refresh(); saveCatalog(); };
 			if (imageFile) { const reader = new FileReader(); reader.onload = () => addProduct(reader.result); reader.readAsDataURL(imageFile); } else addProduct('');
 		});
 		document.getElementById('login-form').addEventListener('submit', event => { event.preventDefault(); const password = document.getElementById('admin-password').value; if (password !== ADMIN_PASSWORD) { document.getElementById('login-error').textContent = 'Contraseña incorrecta.'; return; } sessionStorage.setItem('catalog-admin', 'true'); document.getElementById('login-modal').classList.add('hidden'); document.getElementById('client-view').classList.add('hidden'); document.getElementById('admin-view').classList.remove('hidden'); document.querySelectorAll('[data-view]').forEach(button => button.classList.remove('active')); document.getElementById('admin-password').value = ''; });
 		refresh();
+		loadCatalog();
 	</script>
 </body>
 </html>
